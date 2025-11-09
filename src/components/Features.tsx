@@ -47,10 +47,10 @@ export const Features = () => {
       <div className="max-w-7xl mx-auto">
         <div className="text-center space-y-4 mb-16">
           <h2 className="text-4xl sm:text-5xl font-bold">
-            Everything Your Business Needs
+            What AURA Can Do For You
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Powerful features designed to help you manage, grow, and optimize your business operations
+            Advanced AI capabilities designed to elevate your business operations
           </p>
         </div>
         

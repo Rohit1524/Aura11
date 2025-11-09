@@ -2,24 +2,29 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Send, Bot, User, Loader2 } from "lucide-react";
+import { Send, Loader2, Image as ImageIcon, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import auraIcon from "@/assets/aura-icon.png";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  image?: string;
 }
 
 export const ChatInterface = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "Hello! I'm your AI business assistant. How can I help you today? Ask me anything about business planning, strategies, or daily operations."
+      content: "Hello! I'm AURA, your intelligent business assistant. I can help you with business planning, strategies, market analysis, financial insights, and more. You can also upload images of documents, charts, or diagrams for me to analyze. How can I assist you today?"
     }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const scrollToBottom = () => {
@@ -30,27 +35,183 @@ export const ChatInterface = () => {
     scrollToBottom();
   }, [messages]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 20 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "Please select an image under 20MB",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setSelectedImage(e.target?.result as string);
+        setImageFile(file);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = () => {
+    setSelectedImage(null);
+    setImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && !selectedImage) || isLoading) return;
 
     const userMessage = input.trim();
+    const imageToSend = selectedImage;
+    
     setInput("");
-    setMessages(prev => [...prev, { role: "user", content: userMessage }]);
+    setSelectedImage(null);
+    setImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    const newUserMessage: Message = {
+      role: "user",
+      content: userMessage || "Please analyze this image",
+      image: imageToSend || undefined
+    };
+
+    setMessages(prev => [...prev, newUserMessage]);
     setIsLoading(true);
 
     try {
-      // TODO: Replace with actual AI API call
-      // For now, simulate AI response
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const messagePayload = imageToSend
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: userMessage || "Please analyze this image" },
+              { 
+                type: "image_url", 
+                image_url: { url: imageToSend }
+              }
+            ]
+          }
+        : { role: "user", content: userMessage };
+
+      const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
       
-      const aiResponse = generateMockResponse(userMessage);
-      setMessages(prev => [...prev, { role: "assistant", content: aiResponse }]);
+      const response = await fetch(CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ 
+          messages: [
+            ...messages.map(msg => ({
+              role: msg.role,
+              content: msg.image 
+                ? [
+                    { type: "text", text: msg.content },
+                    { type: "image_url", image_url: { url: msg.image } }
+                  ]
+                : msg.content
+            })),
+            messagePayload
+          ]
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to get response from AURA");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantMessage = "";
+      let textBuffer = "";
+      let streamDone = false;
+
+      // Add placeholder message
+      setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        textBuffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex: number;
+        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+          let line = textBuffer.slice(0, newlineIndex);
+          textBuffer = textBuffer.slice(newlineIndex + 1);
+
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          if (line.startsWith(":") || line.trim() === "") continue;
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") {
+            streamDone = true;
+            break;
+          }
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            if (content) {
+              assistantMessage += content;
+              setMessages(prev => 
+                prev.map((m, i) => 
+                  i === prev.length - 1 
+                    ? { ...m, content: assistantMessage } 
+                    : m
+                )
+              );
+            }
+          } catch {
+            textBuffer = line + "\n" + textBuffer;
+            break;
+          }
+        }
+      }
+
+      // Final flush
+      if (textBuffer.trim()) {
+        for (let raw of textBuffer.split("\n")) {
+          if (!raw || raw.startsWith(":") || raw.trim() === "") continue;
+          if (!raw.startsWith("data: ")) continue;
+          const jsonStr = raw.slice(6).trim();
+          if (jsonStr === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            if (content) {
+              assistantMessage += content;
+              setMessages(prev => 
+                prev.map((m, i) => 
+                  i === prev.length - 1 
+                    ? { ...m, content: assistantMessage } 
+                    : m
+                )
+              );
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
     } catch (error) {
+      console.error("Chat error:", error);
       toast({
         title: "Error",
-        description: "Failed to get response. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to get response. Please try again.",
         variant: "destructive"
       });
+      // Remove the placeholder message on error
+      setMessages(prev => prev.slice(0, -1));
     } finally {
       setIsLoading(false);
     }
@@ -67,8 +228,8 @@ export const ChatInterface = () => {
     <section id="chat" className="py-16 px-4 sm:px-6 lg:px-8 bg-muted/30">
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold mb-2">Start Your Conversation</h2>
-          <p className="text-muted-foreground">Ask me anything about your business</p>
+          <h2 className="text-3xl font-bold mb-2">Chat with AURA</h2>
+          <p className="text-muted-foreground">Your intelligent business companion</p>
         </div>
 
         <Card className="overflow-hidden shadow-elegant">
@@ -82,15 +243,21 @@ export const ChatInterface = () => {
                     message.role === "user" ? "flex-row-reverse" : "flex-row"
                   } animate-fade-in`}
                 >
-                  <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+                  <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
                     message.role === "user" 
                       ? "bg-accent" 
-                      : "bg-gradient-primary"
+                      : "bg-gradient-primary p-0.5"
                   }`}>
                     {message.role === "user" ? (
-                      <User className="w-5 h-5 text-accent-foreground" />
+                      <div className="w-full h-full bg-accent rounded-full flex items-center justify-center">
+                        <span className="text-accent-foreground font-semibold text-sm">You</span>
+                      </div>
                     ) : (
-                      <Bot className="w-5 h-5 text-primary-foreground" />
+                      <img 
+                        src={auraIcon} 
+                        alt="AURA" 
+                        className="w-full h-full object-cover rounded-full"
+                      />
                     )}
                   </div>
                   
@@ -102,6 +269,13 @@ export const ChatInterface = () => {
                         ? "bg-accent text-accent-foreground"
                         : "bg-secondary text-secondary-foreground"
                     }`}>
+                      {message.image && (
+                        <img 
+                          src={message.image} 
+                          alt="Uploaded" 
+                          className="max-w-full max-h-64 rounded-lg mb-2"
+                        />
+                      )}
                       <p className="leading-relaxed whitespace-pre-wrap">
                         {message.content}
                       </p>
@@ -112,8 +286,12 @@ export const ChatInterface = () => {
               
               {isLoading && (
                 <div className="flex gap-4 animate-fade-in">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-primary flex items-center justify-center">
-                    <Bot className="w-5 h-5 text-primary-foreground" />
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-primary flex items-center justify-center p-0.5">
+                    <img 
+                      src={auraIcon} 
+                      alt="AURA" 
+                      className="w-full h-full object-cover rounded-full"
+                    />
                   </div>
                   <div className="flex-1">
                     <div className="inline-block p-4 rounded-2xl bg-secondary">
@@ -128,18 +306,52 @@ export const ChatInterface = () => {
 
             {/* Input */}
             <div className="border-t border-border p-6 bg-card">
+              {selectedImage && (
+                <div className="mb-4 relative inline-block">
+                  <img 
+                    src={selectedImage} 
+                    alt="Selected" 
+                    className="max-h-32 rounded-lg"
+                  />
+                  <button
+                    onClick={removeImage}
+                    className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 hover:bg-destructive/90"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              
               <div className="flex gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  variant="outline"
+                  size="lg"
+                  disabled={isLoading}
+                  className="flex-shrink-0"
+                >
+                  <ImageIcon className="w-5 h-5" />
+                </Button>
+                
                 <Input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyPress={handleKeyPress}
-                  placeholder="Type your message..."
+                  placeholder="Ask AURA anything about your business..."
                   className="flex-1 bg-background"
                   disabled={isLoading}
                 />
+                
                 <Button 
                   onClick={sendMessage}
-                  disabled={!input.trim() || isLoading}
+                  disabled={(!input.trim() && !selectedImage) || isLoading}
                   size="lg"
                   variant="default"
                 >
@@ -153,22 +365,3 @@ export const ChatInterface = () => {
     </section>
   );
 };
-
-// Mock response generator (will be replaced with actual AI)
-function generateMockResponse(userMessage: string): string {
-  const lowerMessage = userMessage.toLowerCase();
-  
-  if (lowerMessage.includes("business plan") || lowerMessage.includes("planning")) {
-    return "A solid business plan is essential for success. Here are the key components:\n\n1. Executive Summary - Overview of your business\n2. Market Analysis - Understanding your target market\n3. Organization Structure - Your team and management\n4. Product/Service Line - What you're offering\n5. Marketing Strategy - How you'll reach customers\n6. Financial Projections - Revenue and expense forecasts\n\nWould you like me to help you develop any specific section?";
-  }
-  
-  if (lowerMessage.includes("marketing") || lowerMessage.includes("customer")) {
-    return "For effective marketing, focus on:\n\n• Identifying your target audience\n• Creating compelling value propositions\n• Leveraging digital channels (social media, email, content)\n• Building strong customer relationships\n• Measuring and optimizing campaign performance\n\nWhat aspect of marketing would you like to explore further?";
-  }
-  
-  if (lowerMessage.includes("finance") || lowerMessage.includes("money") || lowerMessage.includes("revenue")) {
-    return "Financial management is crucial for business health. Key areas to focus on:\n\n• Cash flow monitoring and forecasting\n• Budgeting and expense control\n• Revenue diversification\n• Profit margin optimization\n• Financial reporting and analysis\n\nWhat specific financial challenge can I help you with?";
-  }
-  
-  return "That's a great question! I can help you with business planning, marketing strategies, financial management, operations, and much more. Could you provide more details about what specific aspect you'd like assistance with?";
-}

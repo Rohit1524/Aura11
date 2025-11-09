@@ -20,15 +20,15 @@ export const Hero = ({ onStartChat }: HeroProps) => {
             </div>
             
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold leading-tight">
-              Your Intelligent{" "}
+              Meet{" "}
               <span className="bg-gradient-accent bg-clip-text text-transparent">
-                Business Assistant
+                AURA
               </span>
             </h1>
             
             <p className="text-xl text-muted-foreground leading-relaxed max-w-2xl">
-              Streamline your daily operations with AI that understands your business needs. 
-              From planning to execution, get instant insights and actionable strategies.
+              Your AI-powered business companion that understands your needs. 
+              From strategic planning to daily operations, AURA delivers instant insights and actionable strategies.
             </p>
             
             <div className="flex flex-col sm:flex-row gap-4">
@@ -40,10 +40,6 @@ export const Hero = ({ onStartChat }: HeroProps) => {
               >
                 Start Conversation
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Button>
-              
-              <Button variant="outline" size="lg">
-                Learn More
               </Button>
             </div>
             
