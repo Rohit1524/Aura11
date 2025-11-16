@@ -355,8 +355,8 @@ export const ChatInterface = () => {
                     <div className={`inline-block p-4 rounded-2xl ${
                       message.role === "user"
                         ? "bg-gradient-accent text-foreground shadow-glow card-3d"
-                        : "bg-secondary/80 backdrop-blur-sm text-foreground border border-primary/20 card-3d"
-                    }`} style={message.role === "assistant" ? { boxShadow: 'var(--shadow-3d)' } : undefined}>
+                        : "bg-secondary/80 backdrop-blur-sm text-foreground border border-primary/20 card-3d-message"
+                    }`} style={message.role === "assistant" ? { boxShadow: '0 5px 15px -3px hsl(var(--primary) / 0.3)' } : undefined}>
                       {message.image && (
                         <img 
                           src={message.image} 
