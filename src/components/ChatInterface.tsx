@@ -24,7 +24,7 @@ export const ChatInterface = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -125,7 +125,7 @@ export const ChatInterface = () => {
     }
   };
 
-  const speakText = (text: string) => {
+  const speakText = (text: string, messageIndex: number) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       
@@ -134,9 +134,9 @@ export const ChatInterface = () => {
       utterance.pitch = 1;
       utterance.volume = 1;
       
-      utterance.onstart = () => setIsSpeaking(true);
-      utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
+      utterance.onstart = () => setSpeakingMessageIndex(messageIndex);
+      utterance.onend = () => setSpeakingMessageIndex(null);
+      utterance.onerror = () => setSpeakingMessageIndex(null);
       
       speechSynthesisRef.current = utterance;
       window.speechSynthesis.speak(utterance);
@@ -146,7 +146,7 @@ export const ChatInterface = () => {
   const stopSpeaking = () => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
-      setIsSpeaking(false);
+      setSpeakingMessageIndex(null);
     }
   };
 
@@ -242,10 +242,6 @@ export const ChatInterface = () => {
           const jsonStr = line.slice(6).trim();
           if (jsonStr === "[DONE]") {
             streamDone = true;
-            // Speak the complete response
-            if (assistantMessage) {
-              speakText(assistantMessage);
-            }
             break;
           }
 
@@ -293,10 +289,6 @@ export const ChatInterface = () => {
         }
       }
 
-      // Speak final message if not already spoken
-      if (assistantMessage && !isSpeaking) {
-        speakText(assistantMessage);
-      }
 
     } catch (error) {
       console.error("Chat error:", error);
@@ -328,7 +320,7 @@ export const ChatInterface = () => {
           <p className="text-muted-foreground">Your intelligent business companion with voice interaction</p>
         </div>
 
-        <Card className="overflow-hidden shadow-neon border-primary/20 animate-glow-pulse">
+        <Card className="overflow-hidden shadow-neon border-primary/20 animate-glow-pulse card-3d" style={{ boxShadow: 'var(--shadow-3d)' }}>
           <div className="h-[600px] flex flex-col">
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -362,9 +354,9 @@ export const ChatInterface = () => {
                   }`}>
                     <div className={`inline-block p-4 rounded-2xl ${
                       message.role === "user"
-                        ? "bg-gradient-accent text-foreground shadow-glow"
-                        : "bg-secondary/80 backdrop-blur-sm text-foreground border border-primary/20"
-                    }`}>
+                        ? "bg-gradient-accent text-foreground shadow-glow card-3d"
+                        : "bg-secondary/80 backdrop-blur-sm text-foreground border border-primary/20 card-3d"
+                    }`} style={message.role === "assistant" ? { boxShadow: 'var(--shadow-3d)' } : undefined}>
                       {message.image && (
                         <img 
                           src={message.image} 
@@ -375,8 +367,21 @@ export const ChatInterface = () => {
                       <p className="leading-relaxed whitespace-pre-wrap">
                         {message.content}
                       </p>
+                      {message.role === "assistant" && message.content && (
+                        <div className="mt-3 pt-3 border-t border-primary/20 flex justify-end">
+                          <Button
+                            onClick={() => speakingMessageIndex === index ? stopSpeaking() : speakText(message.content, index)}
+                            variant="ghost"
+                            size="sm"
+                            className={`gap-2 ${speakingMessageIndex === index ? 'animate-glow-pulse text-accent' : 'text-muted-foreground hover:text-foreground'}`}
+                          >
+                            <Volume2 className="w-4 h-4" />
+                            {speakingMessageIndex === index ? 'Stop' : 'Listen'}
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  </div>
+                   </div>
                 </div>
               ))}
               
@@ -441,21 +446,10 @@ export const ChatInterface = () => {
                   variant={isListening ? "default" : "outline"}
                   size="lg"
                   disabled={isLoading}
-                  className={`flex-shrink-0 ${isListening ? 'animate-glow-pulse' : 'border-primary/30 hover:border-primary/50'}`}
+                  className={`flex-shrink-0 ${isListening ? 'animate-glow-pulse' : 'border-primary/30 hover:border-primary/50'} card-3d`}
                 >
                   {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </Button>
-
-                {isSpeaking && (
-                  <Button
-                    onClick={stopSpeaking}
-                    variant="outline"
-                    size="lg"
-                    className="flex-shrink-0 border-accent/30 hover:border-accent/50 animate-glow-pulse"
-                  >
-                    <Volume2 className="w-5 h-5" />
-                  </Button>
-                )}
                 
                 <Input
                   value={input}
@@ -470,7 +464,8 @@ export const ChatInterface = () => {
                   onClick={sendMessage}
                   disabled={(!input.trim() && !selectedImage) || isLoading}
                   size="lg"
-                  className="bg-gradient-primary hover:shadow-glow"
+                  className="bg-gradient-primary hover:shadow-glow card-3d animate-float-3d"
+                  style={{ boxShadow: 'var(--shadow-3d)' }}
                 >
                   <Send className="w-5 h-5" />
                 </Button>
