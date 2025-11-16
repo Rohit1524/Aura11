@@ -2,7 +2,7 @@
 
 ## Project info
 
-**URL**: https://preview--stratasphere-assist.lovable.app/
+**URL**: https://aura11.app/
 
 ## How can I edit this code?
 
