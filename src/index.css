@@ -177,10 +177,15 @@ All colors MUST be HSL.
 
   .card-3d {
     transform-style: preserve-3d;
-    transition: transform 0.3s ease;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
   }
 
   .card-3d:hover {
-    transform: translateZ(20px) scale(1.02);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px -5px hsl(var(--primary) / 0.4);
+  }
+
+  .card-3d-message {
+    transform-style: preserve-3d;
   }
 }
