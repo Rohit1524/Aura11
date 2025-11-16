@@ -10,7 +10,7 @@ There are several ways of editing your application.
 
 **Use Lovable**
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/af95c696-7cb2-487f-b889-0006f1908d1b) and start prompting.
+Simply visit the [Lovable Project](https://preview--stratasphere-assist.lovable.app/?__lovable_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiRXZlU0wyM3lNTFN0b2NuMTZTNzRkNGwwbEMzMiIsInByb2plY3RfaWQiOiJhZjk1YzY5Ni03Y2IyLTQ4N2YtYjg4OS0wMDA2ZjE5MDhkMWIiLCJub25jZSI6IjZmNzgxN2ZjNzc2M2IwY2FhMmM1MmY5OGM2ZjBjMzllIiwiaXNzIjoibG92YWJsZS1hcGkiLCJzdWIiOiJhZjk1YzY5Ni03Y2IyLTQ4N2YtYjg4OS0wMDA2ZjE5MDhkMWIiLCJhdWQiOlsibG92YWJsZS1hcHAiXSwiZXhwIjoxNzYzOTA4Mjc3LCJuYmYiOjE3NjMzMDM0NzcsImlhdCI6MTc2MzMwMzQ3N30.xiaVTd_coQ8XtmgygreI5_0XGNwUEuZoaMeQwe57hwM/) and start prompting.
 
 Changes made via Lovable will be committed automatically to this repo.
 
