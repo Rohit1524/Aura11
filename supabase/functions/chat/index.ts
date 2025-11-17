@@ -54,25 +54,25 @@ Keep your responses clear, actionable, and professional. Provide specific recomm
             type: "function",
             function: {
               name: "create_chart",
-              description: "Create a chart or graph from provided data. Use this when users ask to visualize data in bar charts, line charts, or pie charts.",
+              description: "Create a chart or graph from provided data. Use this when users ask to visualize data in any type of chart including bar, line, pie, area, scatter, radar, radial bar, composed, funnel, or treemap charts.",
               parameters: {
                 type: "object",
                 properties: {
                   type: {
                     type: "string",
-                    enum: ["bar", "line", "pie"],
-                    description: "The type of chart to create"
+                    enum: ["bar", "line", "pie", "area", "scatter", "radar", "radialBar", "composed", "funnel", "treemap"],
+                    description: "The type of chart to create: bar (column chart), line (line graph), pie (pie chart), area (filled area chart), scatter (scatter plot), radar (radar/spider chart), radialBar (radial bar chart), composed (combination of multiple chart types), funnel (funnel chart), treemap (hierarchical treemap)"
                   },
                   data: {
                     type: "array",
                     items: {
                       type: "object"
                     },
-                    description: "Array of data points. Each object should have keys for the chart axes (e.g., {name: 'Jan', value: 100})"
+                    description: "Array of data points. Each object should have keys for the chart axes (e.g., {name: 'Jan', value: 100}) or for treemap {name: 'Category', size: 100, children: [...]}"
                   },
                   xKey: {
                     type: "string",
-                    description: "The key in data objects to use for x-axis (default: 'name')"
+                    description: "The key in data objects to use for x-axis (default: 'name'). Not used for pie, radialBar, funnel, or treemap charts."
                   },
                   yKey: {
                     type: "string",
@@ -81,6 +81,13 @@ Keep your responses clear, actionable, and professional. Provide specific recomm
                   title: {
                     type: "string",
                     description: "Title for the chart"
+                  },
+                  dataKeys: {
+                    type: "array",
+                    items: {
+                      type: "string"
+                    },
+                    description: "For composed charts: array of data keys to plot (e.g., ['sales', 'revenue', 'profit'])"
                   }
                 },
                 required: ["type", "data"]

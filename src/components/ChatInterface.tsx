@@ -2,29 +2,49 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { Send, Loader2, Image as ImageIcon, X, Mic, MicOff, Volume2 } from "lucide-react";
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { Send, Loader2, Image as ImageIcon, X, Mic, MicOff, Volume2, VolumeX, Pencil, History, Plus, Trash2, Check } from "lucide-react";
+import { 
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
+  ScatterChart, Scatter, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  RadialBarChart, RadialBar, FunnelChart, Funnel, Treemap,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart
+} from "recharts";
 import { useToast } from "@/hooks/use-toast";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { supabase } from "@/integrations/supabase/client";
 import auraIcon from "@/assets/aura-icon.png";
 
 interface Message {
+  id?: string;
   role: "user" | "assistant";
   content: string;
   image?: string;
   chartData?: {
-    type: "bar" | "line" | "pie";
+    type: "bar" | "line" | "pie" | "area" | "scatter" | "radar" | "radialBar" | "composed" | "funnel" | "treemap";
     data: any[];
     xKey?: string;
     yKey?: string;
     title?: string;
+    dataKeys?: string[];
   };
 }
+
+interface Conversation {
+  id: string;
+  device_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
 
 export const ChatInterface = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "Hello! I'm AURA, your intelligent business assistant. I can help you with business planning, strategies, market analysis, financial insights, and more. You can also upload images of documents, charts, or diagrams for me to analyze. How can I assist you today?"
+      content: "Hello! I'm AURA, your intelligent business assistant. I can help you with business planning, strategies, market analysis, financial insights, and more. I can also create various types of charts and graphs from your data. You can upload images of documents, charts, or diagrams for me to analyze. How can I assist you today?"
     }
   ]);
   const [input, setInput] = useState("");
@@ -33,6 +53,12 @@ export const ChatInterface = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string>("");
+  const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
+  const [editedContent, setEditedContent] = useState("");
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -46,6 +72,159 @@ export const ChatInterface = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Initialize device ID and load conversations
+  useEffect(() => {
+    let storedDeviceId = localStorage.getItem("aura_device_id");
+    if (!storedDeviceId) {
+      storedDeviceId = crypto.randomUUID();
+      localStorage.setItem("aura_device_id", storedDeviceId);
+    }
+    setDeviceId(storedDeviceId);
+    loadConversations(storedDeviceId);
+    
+    // Clean up old conversations periodically
+    const cleanup = async () => {
+      try {
+        await supabase.rpc('delete_old_conversations');
+      } catch (error) {
+        console.error('Error cleaning up old conversations:', error);
+      }
+    };
+    cleanup();
+  }, []);
+
+  const loadConversations = async (devId: string) => {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('device_id', devId)
+      .order('updated_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error loading conversations:', error);
+      return;
+    }
+    
+    setConversations(data || []);
+  };
+
+  const loadConversation = async (conversationId: string) => {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+    
+    if (error) {
+      console.error('Error loading messages:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load conversation",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    const loadedMessages: Message[] = data.map(msg => ({
+      id: msg.id,
+      role: msg.role as "user" | "assistant",
+      content: msg.content,
+      chartData: msg.chart_data ? msg.chart_data as any : undefined
+    }));
+    
+    setMessages(loadedMessages);
+    setCurrentConversationId(conversationId);
+    setIsHistoryOpen(false);
+  };
+
+  const saveMessage = async (message: Message) => {
+    if (!currentConversationId) {
+      // Create new conversation
+      const { data: conversation, error: convError } = await supabase
+        .from('conversations')
+        .insert({
+          device_id: deviceId,
+          title: input.substring(0, 50) || 'New Conversation'
+        })
+        .select()
+        .single();
+      
+      if (convError) {
+        console.error('Error creating conversation:', convError);
+        return;
+      }
+      
+      setCurrentConversationId(conversation.id);
+      loadConversations(deviceId);
+      
+      // Save message
+      const { error: msgError } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conversation.id,
+          role: message.role,
+          content: message.content,
+          chart_data: message.chartData
+        });
+      
+      if (msgError) console.error('Error saving message:', msgError);
+    } else {
+      // Save to existing conversation
+      const { error } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id: currentConversationId,
+          role: message.role,
+          content: message.content,
+          chart_data: message.chartData
+        });
+      
+      if (error) console.error('Error saving message:', error);
+      
+      // Update conversation timestamp
+      await supabase
+        .from('conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', currentConversationId);
+    }
+  };
+
+  const createNewConversation = () => {
+    setMessages([{
+      role: "assistant",
+      content: "Hello! I'm AURA, your intelligent business assistant. How can I assist you today?"
+    }]);
+    setCurrentConversationId(null);
+    setIsHistoryOpen(false);
+  };
+
+  const deleteConversation = async (conversationId: string) => {
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('id', conversationId);
+    
+    if (error) {
+      console.error('Error deleting conversation:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete conversation",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    if (currentConversationId === conversationId) {
+      createNewConversation();
+    }
+    
+    loadConversations(deviceId);
+    toast({
+      title: "Success",
+      description: "Conversation deleted"
+    });
+  };
 
   useEffect(() => {
     // Initialize speech recognition
@@ -114,435 +293,500 @@ export const ChatInterface = () => {
     }
   };
 
-  const renderChart = (chartData: Message['chartData']) => {
-    if (!chartData) return null;
-
-    const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
-
-    return (
-      <div className="mt-4 w-full h-80 bg-background/5 rounded-lg p-4 border border-primary/20">
-        {chartData.title && <h3 className="text-lg font-semibold mb-2 text-center">{chartData.title}</h3>}
-        <ResponsiveContainer width="100%" height="90%">
-          {chartData.type === "bar" ? (
-            <BarChart data={chartData.data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--primary) / 0.2)" />
-              <XAxis dataKey={chartData.xKey || "name"} stroke="hsl(var(--foreground))" />
-              <YAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--primary))' }} />
-              <Legend />
-              <Bar dataKey={chartData.yKey || "value"} fill="hsl(var(--primary))" />
-            </BarChart>
-          ) : chartData.type === "line" ? (
-            <LineChart data={chartData.data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--primary) / 0.2)" />
-              <XAxis dataKey={chartData.xKey || "name"} stroke="hsl(var(--foreground))" />
-              <YAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--primary))' }} />
-              <Legend />
-              <Line type="monotone" dataKey={chartData.yKey || "value"} stroke="hsl(var(--primary))" strokeWidth={2} />
-            </LineChart>
-          ) : (
-            <PieChart>
-              <Pie data={chartData.data} cx="50%" cy="50%" labelLine={false} label={(entry) => entry.name} outerRadius={100} fill="hsl(var(--primary))" dataKey={chartData.yKey || "value"}>
-                {chartData.data.map((_entry: any, index: number) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--primary))' }} />
-            </PieChart>
-          )}
-        </ResponsiveContainer>
-      </div>
-    );
-  };
-
   const toggleListening = () => {
-    if (!recognitionRef.current) {
-      toast({
-        title: "Not Supported",
-        description: "Speech recognition is not supported in your browser.",
-        variant: "destructive"
-      });
-      return;
-    }
-
     if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+      recognitionRef.current?.stop();
     } else {
-      recognitionRef.current.start();
+      recognitionRef.current?.start();
       setIsListening(true);
     }
   };
 
   const speakText = (text: string, messageIndex: number) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.9;
-      utterance.pitch = 1;
-      utterance.volume = 1;
-      
-      utterance.onstart = () => setSpeakingMessageIndex(messageIndex);
-      utterance.onend = () => setSpeakingMessageIndex(null);
-      utterance.onerror = () => setSpeakingMessageIndex(null);
-      
-      speechSynthesisRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-    }
-  };
-
-  const stopSpeaking = () => {
-    if ('speechSynthesis' in window) {
+    if (speakingMessageIndex === messageIndex) {
       window.speechSynthesis.cancel();
       setSpeakingMessageIndex(null);
+      return;
     }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => setSpeakingMessageIndex(null);
+    speechSynthesisRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+    setSpeakingMessageIndex(messageIndex);
   };
 
-  const sendMessage = async () => {
-    if ((!input.trim() && !selectedImage) || isLoading) return;
+  const startEdit = (index: number, content: string) => {
+    setEditingMessageIndex(index);
+    setEditedContent(content);
+  };
 
-    const userMessage = input.trim();
-    const imageToSend = selectedImage;
-    
-    setInput("");
-    setSelectedImage(null);
-    setImageFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+  const cancelEdit = () => {
+    setEditingMessageIndex(null);
+    setEditedContent("");
+  };
+
+  const saveEdit = async (index: number) => {
+    if (editedContent.trim() === "") {
+      cancelEdit();
+      return;
     }
+    
+    const updatedMessages = [...messages];
+    updatedMessages[index].content = editedContent;
+    setMessages(updatedMessages);
+    setEditingMessageIndex(null);
+    setEditedContent("");
+    
+    // Resend the edited message
+    await handleSendMessage(editedContent);
+  };
 
-    const newUserMessage: Message = {
+  const renderChart = (chartData: Message['chartData']) => {
+    if (!chartData) return null;
+
+    const { type, data, xKey = 'name', yKey = 'value', title, dataKeys } = chartData;
+
+    return (
+      <div className="mt-4 w-full">
+        {title && <h3 className="text-lg font-semibold mb-2 text-foreground">{title}</h3>}
+        <ResponsiveContainer width="100%" height={400}>
+          {type === 'bar' ? (
+            <BarChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
+              <YAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Legend />
+              <Bar dataKey={yKey} fill="hsl(var(--chart-1))" />
+            </BarChart>
+          ) : type === 'line' ? (
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
+              <YAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Legend />
+              <Line type="monotone" dataKey={yKey} stroke="hsl(var(--chart-2))" strokeWidth={2} />
+            </LineChart>
+          ) : type === 'area' ? (
+            <AreaChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
+              <YAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Legend />
+              <Area type="monotone" dataKey={yKey} stroke="hsl(var(--chart-3))" fill="hsl(var(--chart-3))" fillOpacity={0.6} />
+            </AreaChart>
+          ) : type === 'scatter' ? (
+            <ScatterChart>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
+              <YAxis dataKey={yKey} stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Scatter data={data} fill="hsl(var(--chart-4))" />
+            </ScatterChart>
+          ) : type === 'radar' ? (
+            <RadarChart data={data}>
+              <PolarGrid stroke="hsl(var(--border))" />
+              <PolarAngleAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
+              <PolarRadiusAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Radar dataKey={yKey} stroke="hsl(var(--chart-5))" fill="hsl(var(--chart-5))" fillOpacity={0.6} />
+            </RadarChart>
+          ) : type === 'radialBar' ? (
+            <RadialBarChart innerRadius="10%" outerRadius="80%" data={data}>
+              <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <RadialBar dataKey={yKey} angleAxisId={0}>
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </RadialBar>
+            </RadialBarChart>
+          ) : type === 'funnel' ? (
+            <FunnelChart>
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Funnel dataKey={yKey} data={data}>
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Funnel>
+            </FunnelChart>
+          ) : type === 'treemap' ? (
+            <Treemap data={data} dataKey="size" stroke="hsl(var(--background))" fill="hsl(var(--chart-1))">
+              {data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              ))}
+            </Treemap>
+          ) : type === 'composed' && dataKeys ? (
+            <ComposedChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
+              <YAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Legend />
+              {dataKeys.map((key, index) => (
+                index % 2 === 0 ? (
+                  <Bar key={key} dataKey={key} fill={COLORS[index % COLORS.length]} />
+                ) : (
+                  <Line key={key} type="monotone" dataKey={key} stroke={COLORS[index % COLORS.length]} strokeWidth={2} />
+                )
+              ))}
+            </ComposedChart>
+          ) : type === 'pie' ? (
+            <PieChart>
+              <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={120} label>
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Legend />
+            </PieChart>
+          ) : null}
+        </ResponsiveContainer>
+      </div>
+    );
+  };
+
+  const handleSendMessage = async (messageText: string = input) => {
+    const trimmedInput = messageText.trim();
+    if (trimmedInput === "" && !selectedImage) return;
+
+    const userMessage: Message = {
       role: "user",
-      content: userMessage || "Please analyze this image",
-      image: imageToSend || undefined
+      content: trimmedInput || "Analyze this image",
+      image: selectedImage || undefined,
     };
 
-    setMessages(prev => [...prev, newUserMessage]);
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
+    await saveMessage(userMessage);
+    setInput("");
     setIsLoading(true);
+    removeImage();
 
     try {
-      const messagePayload = imageToSend
-        ? {
-            role: "user",
-            content: [
-              { type: "text", text: userMessage || "Please analyze this image" },
-              { 
-                type: "image_url", 
-                image_url: { url: imageToSend }
+      const messagesForAPI = newMessages.map(msg => {
+        const apiMessage: any = {
+          role: msg.role,
+          content: msg.content
+        };
+        
+        if (msg.image) {
+          apiMessage.content = [
+            { type: "text", text: msg.content },
+            {
+              type: "image_url",
+              image_url: {
+                url: msg.image
               }
-            ]
-          }
-        : { role: "user", content: userMessage };
-
-      const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
-      
-      const response = await fetch(CHAT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({ 
-          messages: [
-            ...messages.map(msg => ({
-              role: msg.role,
-              content: msg.image 
-                ? [
-                    { type: "text", text: msg.content },
-                    { type: "image_url", image_url: { url: msg.image } }
-                  ]
-                : msg.content
-            })),
-            messagePayload
-          ]
-        }),
+            }
+          ];
+        }
+        
+        return apiMessage;
       });
 
-      if (!response.ok || !response.body) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to get response from AURA");
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          },
+          body: JSON.stringify({ messages: messagesForAPI }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to get response");
       }
 
-      const reader = response.body.getReader();
+      const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      let assistantMessage = "";
-      let textBuffer = "";
-      let streamDone = false;
+      let accumulatedContent = "";
+      let toolCall: any = null;
 
-      // Add placeholder message
-      setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-      while (!streamDone) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        textBuffer += decoder.decode(value, { stream: true });
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
 
-        let newlineIndex: number;
-        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-          let line = textBuffer.slice(0, newlineIndex);
-          textBuffer = textBuffer.slice(newlineIndex + 1);
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
 
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.startsWith(":") || line.trim() === "") continue;
-          if (!line.startsWith("data: ")) continue;
-
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") {
-            streamDone = true;
-            break;
-          }
-
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
-            const toolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-            
-            if (content) {
-              assistantMessage += content;
-              setMessages(prev => 
-                prev.map((m, i) => 
-                  i === prev.length - 1 
-                    ? { ...m, content: assistantMessage } 
-                    : m
-                )
-              );
-            }
-            
-            // Handle tool calls for chart generation
-            if (toolCalls && toolCalls[0]?.function?.name === "create_chart") {
               try {
-                const args = JSON.parse(toolCalls[0].function.arguments);
-                setMessages(prev => 
-                  prev.map((m, i) => 
-                    i === prev.length - 1 
-                      ? { ...m, chartData: args } 
-                      : m
-                  )
-                );
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta;
+
+                if (delta?.content) {
+                  accumulatedContent += delta.content;
+                  setMessages([...newMessages, {
+                    role: "assistant",
+                    content: accumulatedContent
+                  }]);
+                }
+
+                if (delta?.tool_calls) {
+                  const tc = delta.tool_calls[0];
+                  if (!toolCall) {
+                    toolCall = {
+                      id: tc.id,
+                      type: tc.type,
+                      function: { name: tc.function?.name || '', arguments: '' }
+                    };
+                  }
+                  if (tc.function?.arguments) {
+                    toolCall.function.arguments += tc.function.arguments;
+                  }
+                }
               } catch (e) {
-                console.error("Failed to parse chart arguments:", e);
+                // Ignore parse errors for incomplete JSON
               }
             }
-          } catch {
-            textBuffer = line + "\n" + textBuffer;
-            break;
           }
         }
       }
 
-      // Final flush
-      if (textBuffer.trim()) {
-        for (let raw of textBuffer.split("\n")) {
-          if (!raw || raw.startsWith(":") || raw.trim() === "") continue;
-          if (!raw.startsWith("data: ")) continue;
-          const jsonStr = raw.slice(6).trim();
-          if (jsonStr === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
-            if (content) {
-              assistantMessage += content;
-              setMessages(prev => 
-                prev.map((m, i) => 
-                  i === prev.length - 1 
-                    ? { ...m, content: assistantMessage } 
-                    : m
-                )
-              );
-            }
-          } catch { /* ignore */ }
+      let finalMessage: Message = {
+        role: "assistant",
+        content: accumulatedContent
+      };
+
+      if (toolCall && toolCall.function.name === 'create_chart') {
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          finalMessage.chartData = args;
+        } catch (e) {
+          console.error('Error parsing tool call arguments:', e);
         }
       }
 
-
-    } catch (error) {
-      console.error("Chat error:", error);
+      setMessages([...newMessages, finalMessage]);
+      await saveMessage(finalMessage);
+      
+    } catch (error: any) {
+      console.error("Error:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to get response. Please try again.",
-        variant: "destructive"
+        description: error.message || "Failed to send message. Please try again.",
+        variant: "destructive",
       });
-      // Remove the placeholder message on error
-      setMessages(prev => prev.slice(0, -1));
+      setMessages(newMessages);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      handleSendMessage();
     }
   };
 
   return (
-    <section id="chat" className="py-16 px-4 sm:px-6 lg:px-8 bg-gradient-neon relative">
-      <div className="absolute inset-0 bg-grid-pattern opacity-10"></div>
-      <div className="max-w-4xl mx-auto relative z-10">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold mb-2 bg-gradient-primary bg-clip-text text-transparent">Chat with AURA</h2>
-          <p className="text-muted-foreground">Your intelligent business companion with voice interaction</p>
-        </div>
-
-        <Card className="overflow-hidden shadow-neon border-primary/20 animate-glow-pulse card-3d" style={{ boxShadow: 'var(--shadow-3d)' }}>
-          <div className="h-[600px] flex flex-col">
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`flex gap-4 ${
-                    message.role === "user" ? "flex-row-reverse" : "flex-row"
-                  } animate-fade-in`}
-                >
-                  <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
-                    message.role === "user" 
-                      ? "bg-accent" 
-                      : "bg-gradient-primary p-0.5"
-                  }`}>
-                    {message.role === "user" ? (
-                      <div className="w-full h-full bg-accent rounded-full flex items-center justify-center">
-                        <span className="text-accent-foreground font-semibold text-sm">You</span>
+    <div className="flex flex-col h-[calc(100vh-120px)] max-w-4xl mx-auto p-4">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold text-foreground">Chat with AURA</h2>
+        <div className="flex gap-2">
+          <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="card-3d">
+                <History className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-80">
+              <SheetHeader>
+                <SheetTitle>Conversation History</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4 flex flex-col gap-2">
+                <Button onClick={createNewConversation} className="w-full justify-start gap-2">
+                  <Plus className="h-4 w-4" />
+                  New Conversation
+                </Button>
+                <ScrollArea className="h-[calc(100vh-200px)]">
+                  <div className="flex flex-col gap-2 pr-4">
+                    {conversations.map((conv) => (
+                      <div key={conv.id} className="flex gap-2">
+                        <Button
+                          variant={currentConversationId === conv.id ? "default" : "ghost"}
+                          onClick={() => loadConversation(conv.id)}
+                          className="flex-1 justify-start text-left overflow-hidden"
+                        >
+                          <div className="truncate">{conv.title}</div>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => deleteConversation(conv.id)}
+                          className="shrink-0"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
-                    ) : (
-                      <img 
-                        src={auraIcon} 
-                        alt="AURA" 
-                        className="w-full h-full object-cover rounded-full"
-                      />
-                    )}
+                    ))}
                   </div>
-                  
-                   <div className={`flex-1 max-w-[80%] ${
-                    message.role === "user" ? "text-right" : "text-left"
-                  }`}>
-                    <div className={`inline-block p-4 rounded-2xl ${
-                      message.role === "user"
-                        ? "bg-gradient-accent text-foreground shadow-glow card-3d"
-                        : "bg-secondary/80 backdrop-blur-sm text-foreground border border-primary/20 card-3d-message"
-                    }`} style={message.role === "assistant" ? { boxShadow: '0 5px 15px -3px hsl(var(--primary) / 0.3)' } : undefined}>
-                      {message.image && (
-                        <img 
-                          src={message.image} 
-                          alt="Uploaded" 
-                          className="max-w-full max-h-64 rounded-lg mb-2"
-                        />
-                      )}
-                      <p className="leading-relaxed whitespace-pre-wrap">
-                        {message.content}
-                      </p>
-                      {message.chartData && renderChart(message.chartData)}
-                      {message.role === "assistant" && message.content && (
-                        <div className="mt-3 pt-3 border-t border-primary/20 flex justify-end">
-                          <Button
-                            onClick={() => speakingMessageIndex === index ? stopSpeaking() : speakText(message.content, index)}
-                            variant="ghost"
-                            size="sm"
-                            className={`gap-2 ${speakingMessageIndex === index ? 'animate-glow-pulse text-accent' : 'text-muted-foreground hover:text-foreground'}`}
-                          >
-                            <Volume2 className="w-4 h-4" />
-                            {speakingMessageIndex === index ? 'Stop' : 'Listen'}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                   </div>
-                </div>
-              ))}
-              
-              {isLoading && (
-                <div className="flex gap-4 animate-fade-in">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-primary flex items-center justify-center p-0.5">
-                    <img 
-                      src={auraIcon} 
-                      alt="AURA" 
-                      className="w-full h-full object-cover rounded-full"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <div className="inline-block p-4 rounded-2xl bg-secondary">
-                      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="border-t border-border p-6 bg-card">
-              {selectedImage && (
-                <div className="mb-4 relative inline-block">
-                  <img 
-                    src={selectedImage} 
-                    alt="Selected" 
-                    className="max-h-32 rounded-lg"
-                  />
-                  <button
-                    onClick={removeImage}
-                    className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 hover:bg-destructive/90"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-              
-              <div className="flex gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageSelect}
-                  className="hidden"
-                />
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  variant="outline"
-                  size="lg"
-                  disabled={isLoading}
-                  className="flex-shrink-0 border-primary/30 hover:border-primary/50 hover:shadow-glow"
-                >
-                  <ImageIcon className="w-5 h-5" />
-                </Button>
-
-                <Button
-                  onClick={toggleListening}
-                  variant={isListening ? "default" : "outline"}
-                  size="lg"
-                  disabled={isLoading}
-                  className={`flex-shrink-0 ${isListening ? 'animate-glow-pulse' : 'border-primary/30 hover:border-primary/50'} card-3d`}
-                >
-                  {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                </Button>
-                
-                <Textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyPress}
-                  placeholder="Ask AURA anything or use voice..."
-                  className="flex-1 bg-background/50 backdrop-blur-sm border-primary/20 focus:border-primary/50 min-h-[60px] max-h-[120px] resize-y"
-                  disabled={isLoading || isListening}
-                />
-                
-                <Button 
-                  onClick={sendMessage}
-                  disabled={(!input.trim() && !selectedImage) || isLoading}
-                  size="lg"
-                  className="bg-gradient-primary hover:shadow-glow card-3d animate-float-3d"
-                  style={{ boxShadow: 'var(--shadow-3d)' }}
-                >
-                  <Send className="w-5 h-5" />
-                </Button>
+                </ScrollArea>
               </div>
-            </div>
-          </div>
-        </Card>
+            </SheetContent>
+          </Sheet>
+        </div>
       </div>
-    </section>
+
+      <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+        {messages.map((message, index) => (
+          <div
+            key={index}
+            className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+          >
+            <Card
+              className={`p-4 max-w-[80%] ${
+                message.role === "user"
+                  ? "bg-primary text-primary-foreground card-3d"
+                  : "bg-muted card-3d-message"
+              }`}
+            >
+              {message.role === "assistant" && (
+                <div className="flex items-center gap-2 mb-2">
+                  <img src={auraIcon} alt="AURA" className="w-6 h-6 rounded-full" />
+                  <span className="font-semibold text-foreground">AURA</span>
+                </div>
+              )}
+              {editingMessageIndex === index ? (
+                <div className="flex flex-col gap-2">
+                  <Textarea
+                    value={editedContent}
+                    onChange={(e) => setEditedContent(e.target.value)}
+                    className="min-h-[80px]"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button size="sm" variant="ghost" onClick={cancelEdit}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={() => saveEdit(index)}>
+                      <Check className="h-4 w-4 mr-1" />
+                      Save & Resend
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  {message.image && (
+                    <img
+                      src={message.image}
+                      alt="Uploaded"
+                      className="mt-2 rounded-lg max-w-full h-auto"
+                    />
+                  )}
+                  {renderChart(message.chartData)}
+                  {message.role === "user" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => startEdit(index, message.content)}
+                      className="mt-2"
+                    >
+                      <Pencil className="h-4 w-4 mr-1" />
+                      Edit
+                    </Button>
+                  )}
+                  {message.role === "assistant" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => speakText(message.content, index)}
+                      className="mt-2"
+                    >
+                      {speakingMessageIndex === index ? (
+                        <VolumeX className="h-4 w-4 mr-1" />
+                      ) : (
+                        <Volume2 className="h-4 w-4 mr-1" />
+                      )}
+                      {speakingMessageIndex === index ? "Stop" : "Listen"}
+                    </Button>
+                  )}
+                </>
+              )}
+            </Card>
+          </div>
+        ))}
+        {isLoading && (
+          <div className="flex justify-start">
+            <Card className="p-4 bg-muted card-3d-message">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span className="text-foreground">AURA is thinking...</span>
+              </div>
+            </Card>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {selectedImage && (
+        <div className="mb-4">
+          <Card className="p-2 inline-flex items-center gap-2">
+            <img src={selectedImage} alt="Selected" className="w-20 h-20 object-cover rounded" />
+            <Button variant="ghost" size="icon" onClick={removeImage}>
+              <X className="h-4 w-4" />
+            </Button>
+          </Card>
+        </div>
+      )}
+
+      <div className="flex gap-2 items-end">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleImageSelect}
+          className="hidden"
+        />
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => fileInputRef.current?.click()}
+          className="card-3d shrink-0"
+        >
+          <ImageIcon className="h-5 w-5" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={toggleListening}
+          className={`card-3d shrink-0 ${isListening ? 'bg-destructive text-destructive-foreground' : ''}`}
+        >
+          {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+        </Button>
+        <Textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
+          className="flex-1 resize-none min-h-[60px] max-h-[200px]"
+          rows={2}
+        />
+        <Button 
+          onClick={() => handleSendMessage()} 
+          disabled={isLoading || (input.trim() === "" && !selectedImage)}
+          className="card-3d animate-float-3d shrink-0"
+          size="icon"
+        >
+          <Send className="h-5 w-5" />
+        </Button>
+      </div>
+    </div>
   );
 };
