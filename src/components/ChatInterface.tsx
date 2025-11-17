@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Send, Loader2, Image as ImageIcon, X, Mic, MicOff, Volume2 } from "lucide-react";
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { useToast } from "@/hooks/use-toast";
 import auraIcon from "@/assets/aura-icon.png";
 
@@ -10,6 +11,13 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   image?: string;
+  chartData?: {
+    type: "bar" | "line" | "pie";
+    data: any[];
+    xKey?: string;
+    yKey?: string;
+    title?: string;
+  };
 }
 
 export const ChatInterface = () => {
@@ -104,6 +112,48 @@ export const ChatInterface = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const renderChart = (chartData: Message['chartData']) => {
+    if (!chartData) return null;
+
+    const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
+
+    return (
+      <div className="mt-4 w-full h-80 bg-background/5 rounded-lg p-4 border border-primary/20">
+        {chartData.title && <h3 className="text-lg font-semibold mb-2 text-center">{chartData.title}</h3>}
+        <ResponsiveContainer width="100%" height="90%">
+          {chartData.type === "bar" ? (
+            <BarChart data={chartData.data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--primary) / 0.2)" />
+              <XAxis dataKey={chartData.xKey || "name"} stroke="hsl(var(--foreground))" />
+              <YAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--primary))' }} />
+              <Legend />
+              <Bar dataKey={chartData.yKey || "value"} fill="hsl(var(--primary))" />
+            </BarChart>
+          ) : chartData.type === "line" ? (
+            <LineChart data={chartData.data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--primary) / 0.2)" />
+              <XAxis dataKey={chartData.xKey || "name"} stroke="hsl(var(--foreground))" />
+              <YAxis stroke="hsl(var(--foreground))" />
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--primary))' }} />
+              <Legend />
+              <Line type="monotone" dataKey={chartData.yKey || "value"} stroke="hsl(var(--primary))" strokeWidth={2} />
+            </LineChart>
+          ) : (
+            <PieChart>
+              <Pie data={chartData.data} cx="50%" cy="50%" labelLine={false} label={(entry) => entry.name} outerRadius={100} fill="hsl(var(--primary))" dataKey={chartData.yKey || "value"}>
+                {chartData.data.map((_entry: any, index: number) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--primary))' }} />
+            </PieChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    );
   };
 
   const toggleListening = () => {
@@ -248,6 +298,8 @@ export const ChatInterface = () => {
           try {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            const toolCalls = parsed.choices?.[0]?.delta?.tool_calls;
+            
             if (content) {
               assistantMessage += content;
               setMessages(prev => 
@@ -257,6 +309,22 @@ export const ChatInterface = () => {
                     : m
                 )
               );
+            }
+            
+            // Handle tool calls for chart generation
+            if (toolCalls && toolCalls[0]?.function?.name === "create_chart") {
+              try {
+                const args = JSON.parse(toolCalls[0].function.arguments);
+                setMessages(prev => 
+                  prev.map((m, i) => 
+                    i === prev.length - 1 
+                      ? { ...m, chartData: args } 
+                      : m
+                  )
+                );
+              } catch (e) {
+                console.error("Failed to parse chart arguments:", e);
+              }
             }
           } catch {
             textBuffer = line + "\n" + textBuffer;
@@ -367,6 +435,7 @@ export const ChatInterface = () => {
                       <p className="leading-relaxed whitespace-pre-wrap">
                         {message.content}
                       </p>
+                      {message.chartData && renderChart(message.chartData)}
                       {message.role === "assistant" && message.content && (
                         <div className="mt-3 pt-3 border-t border-primary/20 flex justify-end">
                           <Button
@@ -451,12 +520,12 @@ export const ChatInterface = () => {
                   {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </Button>
                 
-                <Input
+                <Textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
+                  onKeyDown={handleKeyPress}
                   placeholder="Ask AURA anything or use voice..."
-                  className="flex-1 bg-background/50 backdrop-blur-sm border-primary/20 focus:border-primary/50"
+                  className="flex-1 bg-background/50 backdrop-blur-sm border-primary/20 focus:border-primary/50 min-h-[60px] max-h-[120px] resize-y"
                   disabled={isLoading || isListening}
                 />
                 
