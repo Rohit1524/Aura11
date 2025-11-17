@@ -39,12 +39,54 @@ serve(async (req) => {
 - Operations optimization and workflow automation
 - Growth tactics and scaling strategies
 - Industry-specific advice and best practices
+- Data visualization through charts and graphs
 
 When analyzing images, provide detailed insights on business documents, charts, diagrams, or any visual content that can help inform business decisions.
+
+When users provide data and ask for charts or graphs, use the create_chart tool to generate visualizations. Respond with a description of the chart along with the tool call.
 
 Keep your responses clear, actionable, and professional. Provide specific recommendations and steps whenever possible.` 
           },
           ...messages,
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "create_chart",
+              description: "Create a chart or graph from provided data. Use this when users ask to visualize data in bar charts, line charts, or pie charts.",
+              parameters: {
+                type: "object",
+                properties: {
+                  type: {
+                    type: "string",
+                    enum: ["bar", "line", "pie"],
+                    description: "The type of chart to create"
+                  },
+                  data: {
+                    type: "array",
+                    items: {
+                      type: "object"
+                    },
+                    description: "Array of data points. Each object should have keys for the chart axes (e.g., {name: 'Jan', value: 100})"
+                  },
+                  xKey: {
+                    type: "string",
+                    description: "The key in data objects to use for x-axis (default: 'name')"
+                  },
+                  yKey: {
+                    type: "string",
+                    description: "The key in data objects to use for y-axis or values (default: 'value')"
+                  },
+                  title: {
+                    type: "string",
+                    description: "Title for the chart"
+                  }
+                },
+                required: ["type", "data"]
+              }
+            }
+          }
         ],
         stream: true,
       }),
