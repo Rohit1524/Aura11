@@ -1,25 +1,50 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Card } from "@/components/ui/card";
-import { Send, Loader2, Image as ImageIcon, X, Mic, MicOff, Volume2, VolumeX, Pencil, History, Plus, Trash2, Check } from "lucide-react";
-import { 
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
-  ScatterChart, Scatter, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  RadialBarChart, RadialBar, FunnelChart, Funnel, Treemap,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart
-} from "recharts";
-import { useToast } from "@/hooks/use-toast";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
-import auraIcon from "@/assets/aura-icon.png";
+import { Send, Loader2, History, Trash2, Plus, Copy, RotateCw, Check } from "lucide-react";
+import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import {
+  ResponsiveContainer,
+  BarChart,
+  LineChart,
+  PieChart,
+  AreaChart,
+  ScatterChart,
+  RadarChart,
+  RadialBarChart,
+  ComposedChart,
+  FunnelChart,
+  Treemap,
+  Bar,
+  Line,
+  Pie,
+  Area,
+  Scatter,
+  Radar,
+  RadialBar,
+  Funnel,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Cell,
+} from "recharts";
 
 interface Message {
   id?: string;
   role: "user" | "assistant";
   content: string;
-  image?: string;
   chartData?: {
     type: "bar" | "line" | "pie" | "area" | "scatter" | "radar" | "radialBar" | "composed" | "funnel" | "treemap";
     data: any[];
@@ -41,29 +66,14 @@ interface Conversation {
 const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
 
 export const ChatInterface = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "Hello! I'm AURA, your intelligent business assistant. I can help you with business planning, strategies, market analysis, financial insights, and more. I can also create various types of charts and graphs from your data. You can upload images of documents, charts, or diagrams for me to analyze. How can I assist you today?"
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [isListening, setIsListening] = useState(false);
-  const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string>("");
-  const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null);
-  const [editedContent, setEditedContent] = useState("");
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const speechSynthesisRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const { toast } = useToast();
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,7 +83,6 @@ export const ChatInterface = () => {
     scrollToBottom();
   }, [messages]);
 
-  // Initialize device ID and load conversations
   useEffect(() => {
     let storedDeviceId = localStorage.getItem("aura_device_id");
     if (!storedDeviceId) {
@@ -83,7 +92,6 @@ export const ChatInterface = () => {
     setDeviceId(storedDeviceId);
     loadConversations(storedDeviceId);
     
-    // Clean up old conversations periodically
     const cleanup = async () => {
       try {
         await supabase.rpc('delete_old_conversations');
@@ -100,13 +108,10 @@ export const ChatInterface = () => {
       .select('*')
       .eq('device_id', devId)
       .order('updated_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error loading conversations:', error);
-      return;
+
+    if (!error && data) {
+      setConversations(data);
     }
-    
-    setConversations(data || []);
   };
 
   const loadConversation = async (conversationId: string) => {
@@ -115,88 +120,55 @@ export const ChatInterface = () => {
       .select('*')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
-    
-    if (error) {
-      console.error('Error loading messages:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load conversation",
-        variant: "destructive"
+
+    if (!error && data) {
+      setMessages(data.map(msg => ({
+        id: msg.id,
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        chartData: msg.chart_data as any
+      })));
+      setCurrentConversationId(conversationId);
+    }
+  };
+
+  const saveMessage = async (conversationId: string, message: Message) => {
+    const { error } = await supabase
+      .from('messages')
+      .insert({
+        conversation_id: conversationId,
+        role: message.role,
+        content: message.content,
+        chart_data: message.chartData || null
       });
-      return;
+
+    if (error) {
+      console.error('Error saving message:', error);
     }
-    
-    const loadedMessages: Message[] = data.map(msg => ({
-      id: msg.id,
-      role: msg.role as "user" | "assistant",
-      content: msg.content,
-      chartData: msg.chart_data ? msg.chart_data as any : undefined
-    }));
-    
-    setMessages(loadedMessages);
-    setCurrentConversationId(conversationId);
-    setIsHistoryOpen(false);
+
+    await supabase
+      .from('conversations')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', conversationId);
   };
 
-  const saveMessage = async (message: Message) => {
-    if (!currentConversationId) {
-      // Create new conversation
-      const { data: conversation, error: convError } = await supabase
-        .from('conversations')
-        .insert({
-          device_id: deviceId,
-          title: input.substring(0, 50) || 'New Conversation'
-        })
-        .select()
-        .single();
-      
-      if (convError) {
-        console.error('Error creating conversation:', convError);
-        return;
-      }
-      
-      setCurrentConversationId(conversation.id);
-      loadConversations(deviceId);
-      
-      // Save message
-      const { error: msgError } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: conversation.id,
-          role: message.role,
-          content: message.content,
-          chart_data: message.chartData
-        });
-      
-      if (msgError) console.error('Error saving message:', msgError);
-    } else {
-      // Save to existing conversation
-      const { error } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: currentConversationId,
-          role: message.role,
-          content: message.content,
-          chart_data: message.chartData
-        });
-      
-      if (error) console.error('Error saving message:', error);
-      
-      // Update conversation timestamp
-      await supabase
-        .from('conversations')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', currentConversationId);
-    }
-  };
+  const createNewConversation = async () => {
+    if (!deviceId) return;
 
-  const createNewConversation = () => {
-    setMessages([{
-      role: "assistant",
-      content: "Hello! I'm AURA, your intelligent business assistant. How can I assist you today?"
-    }]);
-    setCurrentConversationId(null);
-    setIsHistoryOpen(false);
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert({
+        device_id: deviceId,
+        title: 'New Conversation'
+      })
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCurrentConversationId(data.id);
+      setMessages([]);
+      await loadConversations(deviceId);
+    }
   };
 
   const deleteConversation = async (conversationId: string) => {
@@ -204,143 +176,128 @@ export const ChatInterface = () => {
       .from('conversations')
       .delete()
       .eq('id', conversationId);
-    
-    if (error) {
-      console.error('Error deleting conversation:', error);
-      toast({
-        title: "Error",
-        description: "Failed to delete conversation",
-        variant: "destructive"
-      });
-      return;
+
+    if (!error) {
+      if (currentConversationId === conversationId) {
+        setMessages([]);
+        setCurrentConversationId(null);
+      }
+      await loadConversations(deviceId);
+      toast.success("Conversation deleted");
     }
-    
-    if (currentConversationId === conversationId) {
-      createNewConversation();
-    }
-    
-    loadConversations(deviceId);
-    toast({
-      title: "Success",
-      description: "Conversation deleted"
-    });
   };
 
-  useEffect(() => {
-    // Initialize speech recognition
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      
-      recognitionRef.current.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setInput(transcript);
-        setIsListening(false);
-      };
+  const copyToClipboard = async (text: string, index: number) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+    toast.success("Copied to clipboard");
+  };
 
-      recognitionRef.current.onerror = () => {
-        setIsListening(false);
-        toast({
-          title: "Error",
-          description: "Failed to recognize speech. Please try again.",
-          variant: "destructive"
+  const regenerateResponse = async (messageIndex: number) => {
+    const userMessage = messages[messageIndex - 1];
+    if (!userMessage || userMessage.role !== "user") return;
+
+    setMessages((prev) => prev.slice(0, messageIndex));
+    setIsLoading(true);
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          },
+          body: JSON.stringify({
+            messages: messages.slice(0, messageIndex),
+          }),
+        }
+      );
+
+      if (!response.ok) throw new Error("Failed to get response");
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let assistantMessage = "";
+      let currentChartData = null;
+
+      while (true) {
+        const { done, value } = (await reader?.read()) || {};
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.choices?.[0]?.delta?.content) {
+                assistantMessage += parsed.choices[0].delta.content;
+                setMessages((prev) => {
+                  const newMessages = [...prev];
+                  const lastMessage = newMessages[newMessages.length - 1];
+                  if (lastMessage && lastMessage.role === "assistant") {
+                    lastMessage.content = assistantMessage;
+                  } else {
+                    newMessages.push({
+                      role: "assistant",
+                      content: assistantMessage,
+                    });
+                  }
+                  return newMessages;
+                });
+              }
+
+              if (parsed.choices?.[0]?.delta?.tool_calls) {
+                const toolCall = parsed.choices[0].delta.tool_calls[0];
+                if (toolCall?.function?.name === "create_chart") {
+                  try {
+                    const args = JSON.parse(toolCall.function.arguments);
+                    currentChartData = args;
+                  } catch (e) {
+                    console.error("Error parsing chart data:", e);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Error parsing SSE data:", e);
+            }
+          }
+        }
+      }
+
+      if (currentChartData) {
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const lastMessage = newMessages[newMessages.length - 1];
+          if (lastMessage && lastMessage.role === "assistant") {
+            lastMessage.chartData = currentChartData;
+          }
+          return newMessages;
         });
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-    }
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      if (speechSynthesisRef.current) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, [toast]);
-
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 20 * 1024 * 1024) {
-        toast({
-          title: "File too large",
-          description: "Please select an image under 20MB",
-          variant: "destructive"
-        });
-        return;
       }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setSelectedImage(e.target?.result as string);
-        setImageFile(file);
+      const finalMessage = {
+        role: "assistant" as const,
+        content: assistantMessage,
+        chartData: currentChartData,
       };
-      reader.readAsDataURL(file);
+
+      if (currentConversationId) {
+        await saveMessage(currentConversationId, finalMessage);
+      }
+    } catch (error) {
+      console.error("Error regenerating response:", error);
+      toast.error("Failed to regenerate response");
+    } finally {
+      setIsLoading(false);
     }
-  };
-
-  const removeImage = () => {
-    setSelectedImage(null);
-    setImageFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-    } else {
-      recognitionRef.current?.start();
-      setIsListening(true);
-    }
-  };
-
-  const speakText = (text: string, messageIndex: number) => {
-    if (speakingMessageIndex === messageIndex) {
-      window.speechSynthesis.cancel();
-      setSpeakingMessageIndex(null);
-      return;
-    }
-
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => setSpeakingMessageIndex(null);
-    speechSynthesisRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-    setSpeakingMessageIndex(messageIndex);
-  };
-
-  const startEdit = (index: number, content: string) => {
-    setEditingMessageIndex(index);
-    setEditedContent(content);
-  };
-
-  const cancelEdit = () => {
-    setEditingMessageIndex(null);
-    setEditedContent("");
-  };
-
-  const saveEdit = async (index: number) => {
-    if (editedContent.trim() === "") {
-      cancelEdit();
-      return;
-    }
-    
-    const updatedMessages = [...messages];
-    updatedMessages[index].content = editedContent;
-    setMessages(updatedMessages);
-    setEditingMessageIndex(null);
-    setEditedContent("");
-    
-    // Resend the edited message
-    await handleSendMessage(editedContent);
   };
 
   const renderChart = (chartData: Message['chartData']) => {
@@ -348,66 +305,89 @@ export const ChatInterface = () => {
 
     const { type, data, xKey = 'name', yKey = 'value', title, dataKeys } = chartData;
 
+    const commonProps = {
+      width: '100%',
+      height: 300,
+      data,
+    };
+
     return (
-      <div className="mt-4 w-full">
-        {title && <h3 className="text-lg font-semibold mb-2 text-foreground">{title}</h3>}
-        <ResponsiveContainer width="100%" height={400}>
+      <div className="my-4 p-4 bg-card rounded-lg border">
+        {title && <h3 className="text-lg font-semibold mb-4">{title}</h3>}
+        <ResponsiveContainer width="100%" height={300}>
           {type === 'bar' ? (
             <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
-              <YAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey={xKey} />
+              <YAxis />
+              <Tooltip />
               <Legend />
-              <Bar dataKey={yKey} fill="hsl(var(--chart-1))" />
+              <Bar dataKey={yKey} fill={COLORS[0]} />
             </BarChart>
           ) : type === 'line' ? (
             <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
-              <YAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey={xKey} />
+              <YAxis />
+              <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey={yKey} stroke="hsl(var(--chart-2))" strokeWidth={2} />
+              <Line type="monotone" dataKey={yKey} stroke={COLORS[0]} />
             </LineChart>
-          ) : type === 'area' ? (
-            <AreaChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
-              <YAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
-              <Legend />
-              <Area type="monotone" dataKey={yKey} stroke="hsl(var(--chart-3))" fill="hsl(var(--chart-3))" fillOpacity={0.6} />
-            </AreaChart>
-          ) : type === 'scatter' ? (
-            <ScatterChart>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
-              <YAxis dataKey={yKey} stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
-              <Scatter data={data} fill="hsl(var(--chart-4))" />
-            </ScatterChart>
-          ) : type === 'radar' ? (
-            <RadarChart data={data}>
-              <PolarGrid stroke="hsl(var(--border))" />
-              <PolarAngleAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
-              <PolarRadiusAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
-              <Radar dataKey={yKey} stroke="hsl(var(--chart-5))" fill="hsl(var(--chart-5))" fillOpacity={0.6} />
-            </RadarChart>
-          ) : type === 'radialBar' ? (
-            <RadialBarChart innerRadius="10%" outerRadius="80%" data={data}>
-              <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
-              <RadialBar dataKey={yKey} angleAxisId={0}>
+          ) : type === 'pie' ? (
+            <PieChart>
+              <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={80} label>
                 {data.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
-              </RadialBar>
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          ) : type === 'area' ? (
+            <AreaChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey={xKey} />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Area type="monotone" dataKey={yKey} stroke={COLORS[0]} fill={COLORS[0]} />
+            </AreaChart>
+          ) : type === 'scatter' ? (
+            <ScatterChart>
+              <CartesianGrid />
+              <XAxis dataKey={xKey} />
+              <YAxis dataKey={yKey} />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+              <Scatter name="Data" data={data} fill={COLORS[0]} />
+            </ScatterChart>
+          ) : type === 'radar' ? (
+            <RadarChart data={data}>
+              <PolarGrid />
+              <PolarAngleAxis dataKey={xKey} />
+              <PolarRadiusAxis />
+              <Radar name="Data" dataKey={yKey} stroke={COLORS[0]} fill={COLORS[0]} fillOpacity={0.6} />
+              <Legend />
+            </RadarChart>
+          ) : type === 'radialBar' ? (
+            <RadialBarChart innerRadius="10%" outerRadius="80%" data={data}>
+              <RadialBar label={{ position: 'insideStart', fill: '#fff' }} background dataKey={yKey} />
+              <Legend />
+              <Tooltip />
             </RadialBarChart>
+          ) : type === 'composed' && dataKeys ? (
+            <ComposedChart data={data}>
+              <CartesianGrid stroke="#f5f5f5" />
+              <XAxis dataKey={xKey} />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {dataKeys.map((key, idx) => (
+                <Bar key={key} dataKey={key} fill={COLORS[idx % COLORS.length]} />
+              ))}
+            </ComposedChart>
           ) : type === 'funnel' ? (
             <FunnelChart>
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
+              <Tooltip />
               <Funnel dataKey={yKey} data={data}>
                 {data.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -415,90 +395,60 @@ export const ChatInterface = () => {
               </Funnel>
             </FunnelChart>
           ) : type === 'treemap' ? (
-            <Treemap data={data} dataKey="size" stroke="hsl(var(--background))" fill="hsl(var(--chart-1))">
+            <Treemap data={data} dataKey="size" stroke="#fff" fill={COLORS[0]}>
               {data.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Treemap>
-          ) : type === 'composed' && dataKeys ? (
-            <ComposedChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey={xKey} stroke="hsl(var(--foreground))" />
-              <YAxis stroke="hsl(var(--foreground))" />
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
-              <Legend />
-              {dataKeys.map((key, index) => (
-                index % 2 === 0 ? (
-                  <Bar key={key} dataKey={key} fill={COLORS[index % COLORS.length]} />
-                ) : (
-                  <Line key={key} type="monotone" dataKey={key} stroke={COLORS[index % COLORS.length]} strokeWidth={2} />
-                )
-              ))}
-            </ComposedChart>
-          ) : type === 'pie' ? (
-            <PieChart>
-              <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={120} label>
-                {data.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }} />
-              <Legend />
-            </PieChart>
           ) : null}
         </ResponsiveContainer>
       </div>
     );
   };
 
-  const handleSendMessage = async (messageText: string = input) => {
-    const trimmedInput = messageText.trim();
-    if (trimmedInput === "" && !selectedImage) return;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
 
-    const userMessage: Message = {
-      role: "user",
-      content: trimmedInput || "Analyze this image",
-      image: selectedImage || undefined,
-    };
+    let convId = currentConversationId;
+    if (!convId && deviceId) {
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert({
+          device_id: deviceId,
+          title: input.slice(0, 50)
+        })
+        .select()
+        .single();
 
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-    await saveMessage(userMessage);
+      if (!error && data) {
+        convId = data.id;
+        setCurrentConversationId(data.id);
+        await loadConversations(deviceId);
+      }
+    }
+
+    const userMessage: Message = { role: "user", content: input };
+    setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
-    removeImage();
+
+    if (convId) {
+      await saveMessage(convId, userMessage);
+    }
 
     try {
-      const messagesForAPI = newMessages.map(msg => {
-        const apiMessage: any = {
-          role: msg.role,
-          content: msg.content
-        };
-        
-        if (msg.image) {
-          apiMessage.content = [
-            { type: "text", text: msg.content },
-            {
-              type: "image_url",
-              image_url: {
-                url: msg.image
-              }
-            }
-          ];
-        }
-        
-        return apiMessage;
-      });
-
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ messages: messagesForAPI }),
+          body: JSON.stringify({
+            messages: [...messages, userMessage],
+          }),
         }
       );
 
@@ -509,283 +459,311 @@ export const ChatInterface = () => {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      let accumulatedContent = "";
-      let toolCall: any = null;
+      let assistantMessage = "";
+      let currentChartData = null;
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      while (true) {
+        const { done, value } = (await reader?.read()) || {};
+        if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
 
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") continue;
 
-              try {
-                const parsed = JSON.parse(data);
-                const delta = parsed.choices?.[0]?.delta;
-
-                if (delta?.content) {
-                  accumulatedContent += delta.content;
-                  setMessages([...newMessages, {
-                    role: "assistant",
-                    content: accumulatedContent
-                  }]);
-                }
-
-                if (delta?.tool_calls) {
-                  const tc = delta.tool_calls[0];
-                  if (!toolCall) {
-                    toolCall = {
-                      id: tc.id,
-                      type: tc.type,
-                      function: { name: tc.function?.name || '', arguments: '' }
-                    };
+            try {
+              const parsed = JSON.parse(data);
+              
+              if (parsed.choices?.[0]?.delta?.content) {
+                assistantMessage += parsed.choices[0].delta.content;
+                setMessages((prev) => {
+                  const newMessages = [...prev];
+                  const lastMessage = newMessages[newMessages.length - 1];
+                  if (lastMessage && lastMessage.role === "assistant") {
+                    lastMessage.content = assistantMessage;
+                  } else {
+                    newMessages.push({
+                      role: "assistant",
+                      content: assistantMessage,
+                    });
                   }
-                  if (tc.function?.arguments) {
-                    toolCall.function.arguments += tc.function.arguments;
-                  }
-                }
-              } catch (e) {
-                // Ignore parse errors for incomplete JSON
+                  return newMessages;
+                });
               }
+
+              if (parsed.choices?.[0]?.delta?.tool_calls) {
+                const toolCall = parsed.choices[0].delta.tool_calls[0];
+                if (toolCall?.function?.name === "create_chart") {
+                  try {
+                    const args = JSON.parse(toolCall.function.arguments);
+                    currentChartData = args;
+                  } catch (e) {
+                    console.error("Error parsing chart data:", e);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("Error parsing SSE data:", e);
             }
           }
         }
       }
 
-      let finalMessage: Message = {
-        role: "assistant",
-        content: accumulatedContent
-      };
-
-      if (toolCall && toolCall.function.name === 'create_chart') {
-        try {
-          const args = JSON.parse(toolCall.function.arguments);
-          finalMessage.chartData = args;
-        } catch (e) {
-          console.error('Error parsing tool call arguments:', e);
-        }
+      if (currentChartData) {
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const lastMessage = newMessages[newMessages.length - 1];
+          if (lastMessage && lastMessage.role === "assistant") {
+            lastMessage.chartData = currentChartData;
+          }
+          return newMessages;
+        });
       }
 
-      setMessages([...newMessages, finalMessage]);
-      await saveMessage(finalMessage);
-      
+      const finalMessage = {
+        role: "assistant" as const,
+        content: assistantMessage,
+        chartData: currentChartData,
+      };
+
+      if (convId) {
+        await saveMessage(convId, finalMessage);
+      }
     } catch (error: any) {
       console.error("Error:", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to send message. Please try again.",
-        variant: "destructive",
-      });
-      setMessages(newMessages);
+      toast.error(error.message || "Failed to get response");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] max-w-4xl mx-auto p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-bold text-foreground">Chat with AURA</h2>
-        <div className="flex gap-2">
-          <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-            <SheetTrigger asChild>
-              <Button variant="outline" size="icon" className="card-3d">
-                <History className="h-5 w-5" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="w-80">
-              <SheetHeader>
-                <SheetTitle>Conversation History</SheetTitle>
-              </SheetHeader>
-              <div className="mt-4 flex flex-col gap-2">
-                <Button onClick={createNewConversation} className="w-full justify-start gap-2">
-                  <Plus className="h-4 w-4" />
-                  New Conversation
+    <div className="flex flex-col h-screen bg-background">
+      {/* Header */}
+      <div className="border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
+              <span className="text-primary-foreground font-bold text-sm">A</span>
+            </div>
+            <h1 className="text-lg font-semibold">AURA</h1>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={createNewConversation} variant="ghost" size="sm">
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  <History className="h-4 w-4" />
                 </Button>
-                <ScrollArea className="h-[calc(100vh-200px)]">
-                  <div className="flex flex-col gap-2 pr-4">
+              </SheetTrigger>
+              <SheetContent className="w-80">
+                <SheetHeader>
+                  <SheetTitle>Chat History</SheetTitle>
+                  <SheetDescription>
+                    Last 45 days of conversations
+                  </SheetDescription>
+                </SheetHeader>
+                <ScrollArea className="h-[calc(100vh-120px)] mt-4">
+                  <div className="space-y-2 pr-4">
                     {conversations.map((conv) => (
-                      <div key={conv.id} className="flex gap-2">
-                        <Button
-                          variant={currentConversationId === conv.id ? "default" : "ghost"}
-                          onClick={() => loadConversation(conv.id)}
-                          className="flex-1 justify-start text-left overflow-hidden"
-                        >
-                          <div className="truncate">{conv.title}</div>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteConversation(conv.id)}
-                          className="shrink-0"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                      <div
+                        key={conv.id}
+                        className={`group p-3 rounded-lg border cursor-pointer hover:bg-accent transition-colors ${
+                          currentConversationId === conv.id ? "bg-accent border-primary" : ""
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div
+                            className="flex-1 min-w-0"
+                            onClick={() => loadConversation(conv.id)}
+                          >
+                            <p className="font-medium text-sm truncate">{conv.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(conv.updated_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteConversation(conv.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </ScrollArea>
-              </div>
-            </SheetContent>
-          </Sheet>
+              </SheetContent>
+            </Sheet>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto mb-4 space-y-4">
-        {messages.map((message, index) => (
-          <div
-            key={index}
-            className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <Card
-              className={`p-4 max-w-[80%] ${
-                message.role === "user"
-                  ? "bg-primary text-primary-foreground card-3d"
-                  : "bg-muted card-3d-message"
-              }`}
-            >
-              {message.role === "assistant" && (
-                <div className="flex items-center gap-2 mb-2">
-                  <img src={auraIcon} alt="AURA" className="w-6 h-6 rounded-full" />
-                  <span className="font-semibold text-foreground">AURA</span>
-                </div>
-              )}
-              {editingMessageIndex === index ? (
-                <div className="flex flex-col gap-2">
-                  <Textarea
-                    value={editedContent}
-                    onChange={(e) => setEditedContent(e.target.value)}
-                    className="min-h-[80px]"
-                  />
-                  <div className="flex gap-2 justify-end">
-                    <Button size="sm" variant="ghost" onClick={cancelEdit}>
-                      Cancel
-                    </Button>
-                    <Button size="sm" onClick={() => saveEdit(index)}>
-                      <Check className="h-4 w-4 mr-1" />
-                      Save & Resend
-                    </Button>
+      {/* Messages */}
+      <ScrollArea className="flex-1">
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center mb-4">
+                <span className="text-primary-foreground font-bold text-2xl">A</span>
+              </div>
+              <h2 className="text-3xl font-semibold mb-2">How can I help you today?</h2>
+              <p className="text-muted-foreground max-w-md">
+                I'm AURA, your intelligent business assistant. Ask me about strategy, analytics, planning, or anything business-related.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {messages.map((message, index) => (
+                <div key={index} className="group">
+                  <div className={`flex gap-4 ${message.role === "user" ? "justify-end" : ""}`}>
+                    {message.role === "assistant" && (
+                      <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center flex-shrink-0 mt-1">
+                        <span className="text-primary-foreground font-bold text-sm">A</span>
+                      </div>
+                    )}
+                    <div className={`flex-1 space-y-2 ${message.role === "user" ? "max-w-[80%]" : ""}`}>
+                      {message.role === "user" ? (
+                        <div className="bg-primary text-primary-foreground rounded-2xl px-4 py-3 ml-auto w-fit">
+                          <p className="whitespace-pre-wrap">{message.content}</p>
+                        </div>
+                      ) : (
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code({ node, inline, className, children, ...props }: any) {
+                                const match = /language-(\w+)/.exec(className || "");
+                                return !inline && match ? (
+                                  <div className="relative group/code">
+                                    <SyntaxHighlighter
+                                      {...props}
+                                      style={oneDark}
+                                      language={match[1]}
+                                      PreTag="div"
+                                      className="rounded-lg !bg-zinc-950 !my-2"
+                                    >
+                                      {String(children).replace(/\n$/, "")}
+                                    </SyntaxHighlighter>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="absolute top-2 right-2 h-8 w-8 opacity-0 group-hover/code:opacity-100 transition-opacity"
+                                      onClick={() => copyToClipboard(String(children), index * 1000 + 1)}
+                                    >
+                                      {copiedIndex === index * 1000 + 1 ? (
+                                        <Check className="h-4 w-4" />
+                                      ) : (
+                                        <Copy className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <code {...props} className={`${className} bg-muted px-1 py-0.5 rounded text-sm`}>
+                                    {children}
+                                  </code>
+                                );
+                              },
+                            }}
+                          >
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                      {message.chartData && (
+                        <div className="my-4">
+                          {renderChart(message.chartData)}
+                        </div>
+                      )}
+                      {message.role === "assistant" && (
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyToClipboard(message.content, index)}
+                          >
+                            {copiedIndex === index ? (
+                              <Check className="h-3 w-3 mr-1" />
+                            ) : (
+                              <Copy className="h-3 w-3 mr-1" />
+                            )}
+                            Copy
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => regenerateResponse(index)}
+                            disabled={isLoading}
+                          >
+                            <RotateCw className="h-3 w-3 mr-1" />
+                            Regenerate
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    {message.role === "user" && (
+                      <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 mt-1">
+                        <span className="text-foreground font-medium text-sm">You</span>
+                      </div>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <>
-                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                  {message.image && (
-                    <img
-                      src={message.image}
-                      alt="Uploaded"
-                      className="mt-2 rounded-lg max-w-full h-auto"
-                    />
-                  )}
-                  {renderChart(message.chartData)}
-                  {message.role === "user" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => startEdit(index, message.content)}
-                      className="mt-2"
-                    >
-                      <Pencil className="h-4 w-4 mr-1" />
-                      Edit
-                    </Button>
-                  )}
-                  {message.role === "assistant" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => speakText(message.content, index)}
-                      className="mt-2"
-                    >
-                      {speakingMessageIndex === index ? (
-                        <VolumeX className="h-4 w-4 mr-1" />
-                      ) : (
-                        <Volume2 className="h-4 w-4 mr-1" />
-                      )}
-                      {speakingMessageIndex === index ? "Stop" : "Listen"}
-                    </Button>
-                  )}
-                </>
+              ))}
+              {isLoading && (
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center flex-shrink-0">
+                    <span className="text-primary-foreground font-bold text-sm">A</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-muted-foreground text-sm">Thinking...</span>
+                  </div>
+                </div>
               )}
-            </Card>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="flex justify-start">
-            <Card className="p-4 bg-muted card-3d-message">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <span className="text-foreground">AURA is thinking...</span>
-              </div>
-            </Card>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {selectedImage && (
-        <div className="mb-4">
-          <Card className="p-2 inline-flex items-center gap-2">
-            <img src={selectedImage} alt="Selected" className="w-20 h-20 object-cover rounded" />
-            <Button variant="ghost" size="icon" onClick={removeImage}>
-              <X className="h-4 w-4" />
-            </Button>
-          </Card>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
         </div>
-      )}
+      </ScrollArea>
 
-      <div className="flex gap-2 items-end">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleImageSelect}
-          className="hidden"
-        />
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => fileInputRef.current?.click()}
-          className="card-3d shrink-0"
-        >
-          <ImageIcon className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={toggleListening}
-          className={`card-3d shrink-0 ${isListening ? 'bg-destructive text-destructive-foreground' : ''}`}
-        >
-          {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-        </Button>
-        <Textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
-          className="flex-1 resize-none min-h-[60px] max-h-[200px]"
-          rows={2}
-        />
-        <Button 
-          onClick={() => handleSendMessage()} 
-          disabled={isLoading || (input.trim() === "" && !selectedImage)}
-          className="card-3d animate-float-3d shrink-0"
-          size="icon"
-        >
-          <Send className="h-5 w-5" />
-        </Button>
+      {/* Input */}
+      <div className="border-t border-border bg-background">
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <form onSubmit={handleSubmit} className="relative">
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Message AURA..."
+              disabled={isLoading}
+              className="pr-12 h-12 rounded-2xl border-2 focus-visible:ring-0 focus-visible:border-primary"
+            />
+            <Button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              size="icon"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-lg"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+            </Button>
+          </form>
+          <p className="text-xs text-center text-muted-foreground mt-2">
+            AURA can make mistakes. Check important info.
+          </p>
+        </div>
       </div>
     </div>
   );
