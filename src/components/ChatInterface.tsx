@@ -618,9 +618,55 @@ export const ChatInterface = () => {
                 <span className="text-primary-foreground font-bold text-2xl">A</span>
               </div>
               <h2 className="text-3xl font-semibold mb-2">How can I help you today?</h2>
-              <p className="text-muted-foreground max-w-md">
-                I'm AURA, your intelligent business assistant. Ask me about strategy, analytics, planning, or anything business-related.
+              <p className="text-muted-foreground max-w-md mb-6">
+                I'm AURA, your advanced AI assistant. I excel in business intelligence, general knowledge, and speak 100+ languages. I can help with analysis, planning, conversation in any language, and format responses exactly how you need them.
               </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl w-full px-4">
+                <Button
+                  variant="outline"
+                  className="h-auto py-4 px-4 text-left flex flex-col items-start gap-1"
+                  onClick={() => {
+                    setInput("Create a business strategy for expanding into international markets");
+                    document.querySelector<HTMLInputElement>('input[placeholder="Message AURA..."]')?.focus();
+                  }}
+                >
+                  <span className="font-semibold text-sm">Business Strategy</span>
+                  <span className="text-xs text-muted-foreground">Expand to international markets</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-auto py-4 px-4 text-left flex flex-col items-start gap-1"
+                  onClick={() => {
+                    setInput("Analyze this quarter's sales data and create a visualization");
+                    document.querySelector<HTMLInputElement>('input[placeholder="Message AURA..."]')?.focus();
+                  }}
+                >
+                  <span className="font-semibold text-sm">Data Analysis</span>
+                  <span className="text-xs text-muted-foreground">Visualize sales trends</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-auto py-4 px-4 text-left flex flex-col items-start gap-1"
+                  onClick={() => {
+                    setInput("Explain blockchain technology in simple terms");
+                    document.querySelector<HTMLInputElement>('input[placeholder="Message AURA..."]')?.focus();
+                  }}
+                >
+                  <span className="font-semibold text-sm">Tech Explained</span>
+                  <span className="text-xs text-muted-foreground">Simplify complex concepts</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-auto py-4 px-4 text-left flex flex-col items-start gap-1"
+                  onClick={() => {
+                    setInput("Translate my presentation to Spanish with cultural adaptations");
+                    document.querySelector<HTMLInputElement>('input[placeholder="Message AURA..."]')?.focus();
+                  }}
+                >
+                  <span className="font-semibold text-sm">Multilingual</span>
+                  <span className="text-xs text-muted-foreground">100+ languages supported</span>
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
